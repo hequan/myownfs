@@ -37,6 +37,7 @@ int main(int argc, char *argv[])
 			   return -1;
        }
 
+       /* Begin writing of Block 0 - Super Block */
        sb.version = 1;
        sb.magic = SIMPLEFS_MAGIC;
        sb.block_size = SIMPLEFS_DEFAULT_BLOCK_SIZE;
@@ -57,6 +58,9 @@ int main(int argc, char *argv[])
         }
 
        printf("Super block written succesfully\n");
+       /* End of writing of Block 0 - Super block */
+
+       /* Begin writing of Block 1 - Inode Store */
 
        root_inode.mode = S_IFDIR;
        root_inode.inode_no = SIMPLEFS_ROOTDIR_INODE_NUMBER;
@@ -98,7 +102,9 @@ int main(int argc, char *argv[])
        }
 
        printf("inode store padding bytes (after the two inodes) written sucessfully\n");
-
+       /* End of writing of Block 1 - inode Store */
+       
+       /* Begin writing of Block 2 - Root Directory datablocks */
        strcpy(record.filename, welcomefile_name);
        record.inode_no = WELCOMEFILE_INODE_NUMBER;
        nbytes = sizeof(record);
@@ -110,7 +116,7 @@ int main(int argc, char *argv[])
                goto exit;
        }
        printf("root directory datablocks (name+inode_no pair for welcomefile) written succesfully\n");
-
+       
        nbytes = SIMPLEFS_DEFAULT_BLOCK_SIZE - sizeof(record);
        block_padding = realloc(block_padding, nbytes);
 
@@ -121,7 +127,9 @@ int main(int argc, char *argv[])
                goto exit;
        }
        printf("padding after the rootdirectory children written succesfully\n");
+       /* End of writing of Block 2 - Root directory contents */
 
+       /* Begin writing of Block 3 - Welcome file contents */
        nbytes = sizeof(welcomefile_body);
        ret = write(fd, welcomefile_body, nbytes);
        if (ret != nbytes) {
@@ -130,6 +138,7 @@ int main(int argc, char *argv[])
                goto exit;
        }
        printf("welcomefilebody has been written succesfully\n");
+       /* End of writing of Block 3 - Welcome file contents */
 
        ret = 0;
 
