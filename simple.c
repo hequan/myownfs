@@ -11,7 +11,8 @@
 
 /* This functions returns a simplefs_inode with the given inode_no
  * from the inode store, if it exists. */
-struct simplefs_inode * simplefs_get_inode(struct super_block *sb, uint64_t inode_no)
+struct simplefs_inode * simplefs_get_inode(struct super_block *sb, 
+                                          uint64_t inode_no)
 {  
 	struct simplefs_super_block *sfs_sb = SIMPLEFS_SB(sb);  
 	struct simplefs_inode *sfs_inode = NULL;
@@ -22,10 +23,11 @@ struct simplefs_inode * simplefs_get_inode(struct super_block *sb, uint64_t inod
     /* The inode store can be read once and kept in memory permanently while mounting.
      * But such a model will not be scalable in a filesystem with
      * millions or billions of files (inodes) */
-    bh = (struct buffer_head *)sb_bread(sb, SIMPLEFS_INODESTORE_BLOCK_NUMBER);
-    sfs_inode = (struct simplefs_inode *) bh->b_data;
+    bh = (struct buffer_head *)sb_bread(sb, 
+                                        SIMPLEFS_INODESTORE_BLOCK_NUMBER);
+    sfs_inode = (struct simplefs_inode *)bh->b_data;
 
-    for (i=0;i < sfs_sb->inodes_count; i++) {
+    for (i = 0;i < sfs_sb->inodes_count; i++) {
     	if (sfs_inode->inode_no == inode_no) {
     		/* FIXME: bh->b_data is probably leaking */
             return sfs_inode;
@@ -35,6 +37,52 @@ struct simplefs_inode * simplefs_get_inode(struct super_block *sb, uint64_t inod
 
     return NULL;
 }
+
+ssize_t simplefs_read(struct file * filp, char __user * buf, size_t len,
+                     loff_t * ppos)
+{
+       /* Hack to make sure that we answer the read call only once and not loop infinitely.
+        * We need to implement support for filesize in inode to remove this hack */
+       static int done = 0;
+
+       /* After the commit dd37978c5 in the upstream linux kernel,
+        * we can use just filp->f_inode instead of the
+        * f->f_path.dentry->d_inode redirection */
+       struct simplefs_inode *inode =
+           SIMPLEFS_INODE(filp->f_path.dentry->d_inode);
+       struct buffer_head *bh;
+
+       char *buffer;
+       int nbytes;
+
+       if (done) {
+               done = 0;
+               return 0;
+       }
+
+       bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb,
+                                           inode->data_block_number);
+       buffer = (char *)bh->b_data;
+       nbytes = min(strlen(buffer), len);
+
+       if (copy_to_user(buf, buffer, nbytes)) {
+               brelse(bh);
+               printk(KERN_ERR
+                      "Error copying file contents to the userspace buffer\n");
+               return -EFAULT;
+       }
+
+       brelse(bh);
+
+       *ppos += nbytes;
+
+       done = 1;
+       return nbytes;
+}
+
+const struct file_operations simplefs_file_operations = {
+       .read = simplefs_read
+};
 
 static int simplefs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 {
@@ -56,18 +104,20 @@ static int simplefs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	sfs_inode = SIMPLEFS_INODE(inode);
 
 	if (unlikely(!S_ISDIR(sfs_inode->mode))) {
-               printk(KERN_ERR "inode %llu not a directory", sfs_inode->inode_no);
+               printk(KERN_ERR "inode %llu not a directory", 
+                      sfs_inode->inode_no);
                return -ENOTDIR;
     }
 
     bh = (struct buffer_head *)sb_bread(sb, sfs_inode->data_block_number);
 
-    record = (struct simplefs_dir_record *) bh->b_data;
-    for (i=0; i < sfs_inode->dir_children_count; i++) {
-               filldir(dirent, record->filename, SIMPLEFS_FILENAME_MAXLEN, pos, record->inode_no, DT_UNKNOWN);
+    record = (struct simplefs_dir_record *)bh->b_data;
+    for (i = 0; i < sfs_inode->dir_children_count; i++) {
+               filldir(dirent, record->filename, SIMPLEFS_FILENAME_MAXLEN, pos, 
+                      record->inode_no, DT_UNKNOWN);
                filp->f_pos += sizeof(struct simplefs_dir_record);
                pos += sizeof(struct simplefs_dir_record);
-               record ++;
+               record++;
     }
 
     return 0;
@@ -111,7 +161,14 @@ struct dentry *simplefs_lookup(struct inode *parent_inode,
                        inode_init_owner(inode, parent_inode, sfs_inode->mode);
                        inode->i_sb = sb;
                        inode->i_op = &simplefs_inode_ops;
-                       inode->i_fop = &simplefs_dir_operations;
+
+                       if (S_ISDIR(inode->i_mode))
+                               inode->i_fop = &simplefs_dir_operations;
+                       else if (S_ISREG(inode->i_mode))
+                               inode->i_fop = &simplefs_file_operations;
+                       else
+                               printk(KERN_ERR
+                                      "Unknown inode type. Neither a directory nor a file");
 
                        /* FIXME: We should store these times to disk and retrieve them */
                        inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;

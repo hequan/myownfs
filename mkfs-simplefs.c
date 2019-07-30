@@ -18,7 +18,7 @@ int main(int argc, char *argv[])
        struct simplefs_inode welcomefile_inode;
 
        char welcomefile_name[] = "zhanghequan";
-       char welcomefile_body[] = "God bless you.";
+       char welcomefile_body[] = "My name is Hequan, I love it.\n";
        const uint64_t WELCOMEFILE_INODE_NUMBER = 2;
        const uint64_t WELCOMEFILE_DATABLOCK_NUMBER = 3;
 
@@ -70,7 +70,8 @@ int main(int argc, char *argv[])
        ret = write(fd, (char *)&root_inode, sizeof(root_inode));
 
        if (ret != sizeof(root_inode)) {
-               printf("The inode store was not written properly. Retry your mkfs\n");
+               printf
+                   ("The inode store was not written properly. Retry your mkfs\n");
                ret = -1;
                goto exit;
        }
@@ -83,20 +84,24 @@ int main(int argc, char *argv[])
        ret = write(fd, (char *)&welcomefile_inode, sizeof(root_inode));
 
        if (ret != sizeof(root_inode)) {
-               printf("The welcomefile inode was not written properly. Retry your mkfs\n");
+               printf
+                  ("The welcome file inode was not written properly. Retry your mkfs\n");
                ret = -1;
                goto exit;
        }
 
        printf("welcomefile inode written succesfully\n");
 
-       nbytes = SIMPLEFS_DEFAULT_BLOCK_SIZE - sizeof(root_inode) - sizeof(welcomefile_inode);
+       nbytes = 
+              SIMPLEFS_DEFAULT_BLOCK_SIZE - sizeof(root_inode) - 
+              sizeof(welcomefile_inode);
        block_padding = malloc(nbytes);
 
        ret = write(fd, block_padding, nbytes);
 
        if (ret != nbytes) {
-               printf("The padding bytes are not written properly. Retry your mkfs\n");
+               printf
+                   ("The padding bytes are not written properly. Retry your mkfs\n");
                ret = -1;
                goto exit;
        }
@@ -111,7 +116,8 @@ int main(int argc, char *argv[])
 
        ret = write(fd, (char *)&record, nbytes);
        if (ret != nbytes) {
-               printf("Writing the rootdirectory datablock (name+inode_no pair for welcomefile) has failed\n");
+               printf
+                   ("Writing the rootdirectory datablock (name+inode_no pair for welcomefile) has failed\n");
                ret = -1;
                goto exit;
        }
@@ -122,11 +128,13 @@ int main(int argc, char *argv[])
 
        ret = write(fd, block_padding, nbytes);
        if (ret != nbytes) {
-               printf("Writing the padding for rootdirectory children datablock has failed\n");
+               printf
+                  ("Writing the padding for rootdirectory children datablock has failed\n");
                ret = -1;
                goto exit;
        }
-       printf("padding after the rootdirectory children written succesfully\n");
+       printf
+           ("padding after the root directory children written succesfully\n");
        /* End of writing of Block 2 - Root directory contents */
 
        /* Begin writing of Block 3 - Welcome file contents */
