@@ -8,6 +8,8 @@
 #include <linux/buffer_head.h>
 #include <linux/slab.h>
 #include <linux/random.h>
+#include <linux/version.h>
+
 #include "super.h"
 
 /* A super block lock that must be used for any critical section operation on the sb,
@@ -38,8 +40,7 @@ struct simplefs_inode * simplefs_get_inode(struct super_block *sb,
     /* The inode store can be read once and kept in memory permanently while mounting.
      * But such a model will not be scalable in a filesystem with
      * millions or billions of files (inodes) */
-    bh = (struct buffer_head *)sb_bread(sb, 
-                                        SIMPLEFS_INODESTORE_BLOCK_NUMBER);
+    bh = sb_bread(sb, SIMPLEFS_INODESTORE_BLOCK_NUMBER);
     sfs_inode = (struct simplefs_inode *)bh->b_data;
     
 #if 0
@@ -89,8 +90,7 @@ ssize_t simplefs_read(struct file * filp, char __user * buf, size_t len,
                return 0;
        }
 
-       bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb,
-                                           inode->data_block_number);
+       bh = sb_bread(filp->f_path.dentry->d_inode->i_sb, inode->data_block_number);
        
        if (!bh) {
                printk(KERN_ERR "Reading the block number [%llu] failed.",
@@ -142,8 +142,7 @@ ssize_t simplefs_write(struct file * filp, const char __user * buf, size_t len,
                return -ENOSPC;
        }
 
-       bh = (struct buffer_head *)sb_bread(filp->f_path.dentry->d_inode->i_sb,
-                                           sfs_inode->data_block_number);
+       bh = sb_bread(filp->f_path.dentry->d_inode->i_sb, sfs_inode->data_block_number);
 
        if (!bh) {
                printk(KERN_ERR "Reading the block number [%llu] failed.",
@@ -180,8 +179,7 @@ ssize_t simplefs_write(struct file * filp, const char __user * buf, size_t len,
                return -EINTR;
        }
        /* Save the modified inode */
-       bh = (struct buffer_head *)sb_bread(sb,
-                                           SIMPLEFS_INODESTORE_BLOCK_NUMBER);
+       bh = sb_bread(sb, SIMPLEFS_INODESTORE_BLOCK_NUMBER);
 
        sfs_inode->file_size = *ppos;
 
@@ -232,8 +230,7 @@ void simplefs_sb_sync(struct super_block *vsb)
        struct buffer_head *bh;
        struct simplefs_super_block *sb = SIMPLEFS_SB(vsb);
 
-       bh = (struct buffer_head *)sb_bread(vsb,
-                                           SIMPLEFS_SUPERBLOCK_BLOCK_NUMBER);
+       bh = sb_bread(vsb, SIMPLEFS_SUPERBLOCK_BLOCK_NUMBER);
        bh->b_data = (char *)sb;
        mark_buffer_dirty(bh);
        sync_dirty_buffer(bh);
@@ -252,8 +249,7 @@ void simplefs_inode_add(struct super_block *vsb, struct simplefs_inode *inode)
                return;
        }
 
-       bh = (struct buffer_head *)sb_bread(vsb,
-                                           SIMPLEFS_INODESTORE_BLOCK_NUMBER);
+       bh = sb_bread(vsb, SIMPLEFS_INODESTORE_BLOCK_NUMBER);
 
        inode_iterator = (struct simplefs_inode *)bh->b_data;
 
@@ -340,7 +336,11 @@ static int simplefs_sb_get_objects_count(struct super_block *vsb,
        return 0;
 }
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+static int simplefs_iterate(struct file *filp, struct dir_context *ctx)
+#else
 static int simplefs_readdir(struct file *filp, void *dirent, filldir_t filldir)
+#endif
 {
 	loff_t pos;
   struct inode *inode;
@@ -349,8 +349,11 @@ static int simplefs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 	struct simplefs_inode *sfs_inode;
 	struct simplefs_dir_record *record;
 	int i;
-
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+  pos = ctx->pos;
+#else
   pos = filp->f_pos;
+#endif
   inode = filp->f_dentry->d_inode;
   sb = inode->i_sb;
   
@@ -371,13 +374,19 @@ static int simplefs_readdir(struct file *filp, void *dirent, filldir_t filldir)
                return -ENOTDIR;
     }
 
-    bh = (struct buffer_head *)sb_bread(sb, sfs_inode->data_block_number);
+    bh = sb_bread(sb, sfs_inode->data_block_number);
 
     record = (struct simplefs_dir_record *)bh->b_data;
     for (i = 0; i < sfs_inode->dir_children_count; i++) {
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+               dir_emit(ctx, record->filename, SIMPLEFS_FILENAME_MAXLEN,
+                       record->inode_no, DT_UNKNOWN);
+               ctx->pos += sizeof(struct simplefs_dir_record);
+#else
                filldir(dirent, record->filename, SIMPLEFS_FILENAME_MAXLEN, pos, 
                       record->inode_no, DT_UNKNOWN);
                filp->f_pos += sizeof(struct simplefs_dir_record);
+#endif
                pos += sizeof(struct simplefs_dir_record);
                record++;
     }
@@ -388,7 +397,11 @@ static int simplefs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 
 const struct file_operations simplefs_dir_operations = {
        .owner = THIS_MODULE,
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 11, 0)
+       .iterate = simplefs_iterate,
+#else
        .readdir = simplefs_readdir,
+#endif
 };
 
 static int simplefs_mkdir(struct inode *dir, struct dentry *dentry,
@@ -511,6 +524,8 @@ static int simplefs_create_fs_object(struct inode *dir, struct dentry *dentry,
        memcpy(dir_contents_datablock, record,
               sizeof(struct simplefs_dir_record));
 
+       kfree(record);
+
        mark_buffer_dirty(bh);
        sync_dirty_buffer(bh);
        brelse(bh);
@@ -522,8 +537,7 @@ static int simplefs_create_fs_object(struct inode *dir, struct dentry *dentry,
                return -EINTR;
        }
 
-       bh = (struct buffer_head *)sb_bread(sb,
-                                           SIMPLEFS_INODESTORE_BLOCK_NUMBER);
+       bh = sb_bread(sb, SIMPLEFS_INODESTORE_BLOCK_NUMBER);
 
        inode_iterator = (struct simplefs_inode *)bh->b_data;
 
@@ -591,7 +605,7 @@ struct dentry *simplefs_lookup(struct inode *parent_inode,
        struct simplefs_dir_record *record;
        int i;
 
-       bh = (struct buffer_head *)sb_bread(sb, parent->data_block_number);
+       bh = sb_bread(sb, parent->data_block_number);
        record = (struct simplefs_dir_record *) bh->b_data;
        for (i=0; i < parent->dir_children_count; i++) {
                if (!strcmp(record->filename, child_dentry->d_name.name)) {
@@ -647,8 +661,9 @@ int simplefs_fill_super(struct super_block *sb, void *data, int silent)
 	struct inode *root_inode;
 	struct buffer_head *bh;
 	struct simplefs_super_block *sb_disk;
+  int ret = -EPERM;
 
-	bh = (struct buffer_head *)sb_bread(sb, SIMPLEFS_SUPERBLOCK_BLOCK_NUMBER);
+	bh = sb_bread(sb, SIMPLEFS_SUPERBLOCK_BLOCK_NUMBER);
 
 	sb_disk = (struct simplefs_super_block *)bh->b_data;
 	/* FIXME: bh->b_data is probably leaking */
@@ -660,13 +675,13 @@ int simplefs_fill_super(struct super_block *sb, void *data, int silent)
 	if (unlikely(sb_disk->magic != SIMPLEFS_MAGIC)) {
                printk(KERN_ERR
                       "The filesystem that you try to mount is not of type simplefs. Magicnumber mismatch.");
-               return -EPERM;
+               goto release;
     }
 
     if (unlikely(sb_disk->block_size != SIMPLEFS_DEFAULT_BLOCK_SIZE)) {
                printk(KERN_ERR
                       "simplefs seem to be formatted using a non-standard block size.");
-               return -EPERM;
+               goto release;
     }
 
     printk(KERN_INFO
@@ -689,11 +704,24 @@ int simplefs_fill_super(struct super_block *sb, void *data, int silent)
 
     root_inode->i_private = simplefs_get_inode(sb, SIMPLEFS_ROOTDIR_INODE_NUMBER);
 
+#if LINUX_VERSION_CODE >= KERNEL_VERSION(3, 3, 0)
     sb->s_root = d_make_root(root_inode);
+#else
+    sb->s_root = d_alloc_root(root_inode);
+    if (!sb->s_root)
+        iput(root_inode);
+#endif
 
-	if(!sb->s_root)
-		return -ENOMEM;
-	return 0;
+	  if(!sb->s_root) {
+        ret = -ENOMEM;
+        goto release;
+    }
+		
+	  ret = 0;
+release:    
+    brelse(bh);
+
+    return ret;
 }
 
 static struct dentry *simplefs_mount(struct file_system_type *fs_type,
@@ -710,10 +738,12 @@ static struct dentry *simplefs_mount(struct file_system_type *fs_type,
 	return ret;
 }
 
-static void simplefs_kill_superblock(struct super_block *s)
+static void simplefs_kill_superblock(struct super_block *sb)
 {
 	printk(KERN_INFO 
 		"simplefs superblock is destroyed. Unmount succesful.\n");
+
+  kill_block_super(sb);
 	return;
 }
 
@@ -722,6 +752,7 @@ static struct file_system_type simple_fs_type = {
 	.name = "simplefs",
 	.mount = simplefs_mount,
 	.kill_sb = simplefs_kill_superblock,
+  .fs_flags = FS_REQUIRES_DEV,
 };
 
 static int simplefs_init(void)
